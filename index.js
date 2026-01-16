@@ -1,3 +1,8 @@
+/*
+ Copyright (c) 2026 DarkNio
+ Licensed under the MIT License. See LICENSE file in project root.
+*/
+
 const { spawn } = require('child_process');
 const { PassThrough } = require('stream');
 const fs = require('fs');
