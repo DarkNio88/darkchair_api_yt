@@ -190,10 +190,53 @@ function cookiesToNetscape(cookies) {
 
 function createAuthApp() {
   const app = express();
+  app.use(express.json());
+  // simple UI auth sessions (token -> createdAt)
+  const UI_SESSIONS = new Map();
+  const SESSIONS = new Map();
+
+  // helper to parse our cookie
+  function _getUiCookie(req) {
+    const raw = req.headers && req.headers.cookie;
+    if (!raw) return null;
+    const parts = raw.split(';').map(s => s.trim());
+    for (const p of parts) {
+      if (p.startsWith('darkchair_ui=')) return p.split('=')[1];
+    }
+    return null;
+  }
+
+  // protect the UI with a simple password if AUTH_UI_PASSWORD is set
+  app.use('/auth/ui', (req, res, next) => {
+    const pw = process.env.AUTH_UI_PASSWORD;
+    console.log('AUTH_UI_PASSWORD:', pw ? pw : 'not set'); 
+    if (!pw) return next();
+    // allow the login POST path without cookie
+    if (req.path === '/login' || req.path === '/login.html') return next();
+    const token = _getUiCookie(req);
+    if (token && UI_SESSIONS.has(token)) return next();
+    // serve a minimal login page
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.end(`<!doctype html><html><head><meta charset="utf-8"><title>Login</title></head><body style="font-family:system-ui,Arial;margin:20px"><h3>Auth UI Login</h3><form method="POST" action="/auth/ui/login"><input name="password" type="password" placeholder="Password" style="padding:8px;width:300px" /><button type="submit" style="margin-left:8px;padding:8px 12px">Login</button></form></body></html>`);
+  });
+
   // serve simple auth UI
   app.use('/auth/ui', express.static(path.join(__dirname, 'public')));
-  app.use(express.json());
-  const SESSIONS = new Map();
+
+  // login handler for the UI form
+  app.post('/auth/ui/login', express.urlencoded({ extended: false }), (req, res) => {
+    const pw = process.env.AUTH_UI_PASSWORD;
+    if (!pw) return res.status(400).send('UI login not enabled');
+    const provided = String(req.body.password);
+    console.log('Auth UI login attempt with password:', provided ,pw);
+    if (provided !== pw) return res.status(401).send('Invalid password');
+    const token = makeId();
+    UI_SESSIONS.set(token, Date.now());
+    // set cookie for 24h (Path=/ so it's sent for all auth UI requests)
+    const maxAge = 24 * 60 * 60 * 1000;
+    res.setHeader('Set-Cookie', `darkchair_ui=${token}; Path=/; HttpOnly; Max-Age=${Math.floor(maxAge/1000)}`);
+    return res.redirect('/auth/ui');
+  });
 
   app.post('/auth/start', async (req, res) => {
     const id = makeId();
@@ -464,59 +507,47 @@ function createAuthApp() {
       }
     });
 
-    // POST /auth/login/:id -> attempt to fill login form (email/password) in the session page
+    // POST /auth/login/:id -> attempt to fill email/password on Google login flow
     app.post('/auth/login/:id', async (req, res) => {
       const id = req.params.id;
       const sess = SESSIONS.get(id);
       if (!sess) return res.status(404).json({ error: 'session not found' });
       try {
-        const body = req.body || {};
-        const email = String(body.email || '').trim();
-        const password = String(body.password || '').trim();
-        if (!email || !password) return res.status(400).json({ error: 'missing email or password' });
         const { page } = sess;
+        const body = req.body || {};
+        const email = body.email || ''; const password = body.password || '';
+        if (!email || !password) return res.status(400).json({ error: 'missing email or password' });
 
-        // Try common selectors for Google account login flow
-        const emailSelectors = ['input[type="email"]', '#identifierId', 'input[name="identifier"]', 'input#Email'];
-        let emailFilled = false;
-        for (const sel of emailSelectors) {
-          try {
-            const el = await page.$(sel);
-            if (el) {
-              await page.focus(sel);
-              await page.keyboard.type(email, { delay: 80 });
-              await page.keyboard.press('Enter');
-              emailFilled = true;
-              break;
-            }
-          } catch (e) { /* ignore */ }
+        // Try to fill the email field and proceed
+        try {
+          await page.waitForSelector('input[type="email"]', { timeout: 10000 });
+          await page.focus('input[type="email"]');
+          await page.keyboard.type(email, { delay: 50 });
+          // click identifier next if present
+          try { await page.click('#identifierNext'); } catch (e) {}
+          try { await page.click('button[jsname="LgbsSe"]'); } catch (e) {}
+          // small pause for transition
+          await page.waitForTimeout(1000);
+        } catch (e) {
+          // ignore - maybe email already filled or different flow
         }
-        if (!emailFilled) {
-          try { await page.evaluate(e => { const i = document.querySelector('input[type=email]'); if (i) { i.focus(); i.value = e; } }, email); await page.keyboard.press('Enter'); } catch (e) {}
 
-        // wait a bit for the password field to appear
+        // Wait for password input
+        try {
+          await page.waitForSelector('input[type="password"]', { timeout: 10000 });
+          await page.focus('input[type="password"]');
+          await page.keyboard.type(password, { delay: 50 });
+          try { await page.click('#passwordNext'); } catch (e) {}
+          try { await page.click('button[jsname="LgbsSe"]'); } catch (e) {}
+        } catch (e) {
+          // if password not found, respond with partial success
+          console.warn('auth-server: password input not found during login attempt');
+          return res.status(400).json({ error: 'password field not found', detail: e && e.message ? e.message : String(e) });
+        }
+
+        // give some time for navigation to complete
         await page.waitForTimeout(2000);
-
-        const passwordSelectors = ['input[type="password"]', 'input[name="password"]', '#password input'];
-        let pwdFilled = false;
-        for (const sel of passwordSelectors) {
-          try {
-            const el = await page.$(sel);
-            if (el) {
-              await page.focus(sel);
-              await page.keyboard.type(password, { delay: 80 });
-              await page.keyboard.press('Enter');
-              pwdFilled = true;
-              break;
-            }
-          } catch (e) { /* ignore */ }
-        }
-        if (!pwdFilled) {
-          try { await page.evaluate(p => { const i = document.querySelector('input[type=password]'); if (i) { i.focus(); i.value = p; } }, password); await page.keyboard.press('Enter'); } catch (e) {}
-
-        // allow some time for navigation/verification
-        await page.waitForTimeout(3000);
-        return res.json({ ok: true, emailProvided: !!email, passwordProvided: !!password });
+        return res.json({ ok: true, message: 'login submitted — check session window for any additional verification' });
       } catch (e) {
         console.error('auth-server: login error', e && e.message ? e.message : e);
         return res.status(500).json({ error: 'login failed', detail: e && e.message ? e.message : String(e) });

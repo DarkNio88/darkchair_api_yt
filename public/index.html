@@ -12,6 +12,16 @@
 
   <div id="out"></div>
 
+  <div style="margin-top:8px;padding:8px;border:1px solid #eee;max-width:480px;">
+    <strong>Quick Login</strong>
+    <div style="margin-top:6px">
+      <input id="emailInput" placeholder="Email" style="width:100%;padding:6px;margin-bottom:6px" />
+      <input id="passwordInput" type="password" placeholder="Password" style="width:100%;padding:6px;margin-bottom:6px" />
+      <button id="loginBtn" disabled>Submit Login to Session</button>
+      <div id="loginResult" style="margin-top:6px;color:#444;font-size:13px"></div>
+    </div>
+  </div>
+
   <button id="start">Start auth session</button>
   <button id="status" disabled>Check status</button>
   <button id="export" disabled>Export cookies</button>
@@ -24,17 +34,6 @@
     <h3>Live Preview</h3>
     <div>
       <img id="streamImg" alt="stream" tabindex="0" style="max-width:640px;border:1px solid #ccc;display:none;outline:none" />
-    </div>
-  </div>
-
-  <div style="margin-top:12px">
-    <h3>Quick Login (convenience)</h3>
-    <p>Optional: send credentials to the server-side browser session to attempt login. Google may block automated input.</p>
-    <div>
-      <input id="loginEmail" placeholder="email" style="width:300px;margin:4px" />
-      <input id="loginPassword" placeholder="password" type="password" style="width:300px;margin:4px" />
-      <button id="loginBtn" disabled>Send Login</button>
-      <pre id="loginOut" style="background:#f6f6f6;padding:8px;border:1px solid #ddd;max-width:800px;overflow:auto;">login status</pre>
     </div>
   </div>
 
@@ -65,7 +64,21 @@
         document.getElementById('runTestsBtn').disabled = false;
         document.getElementById('runTestsNow').disabled = false;
         document.getElementById('openTestBtn').disabled = false;
+        document.getElementById('loginBtn').disabled = false;
       }catch(e){ out('start error: '+(e && e.message?e.message:String(e))); }
+    };
+
+    // Login button: send credentials to server to auto-fill in Puppeteer session
+    document.getElementById('loginBtn').onclick = async()=>{
+      if(!sessionId) return document.getElementById('loginResult').textContent = 'No active session';
+      const email = document.getElementById('emailInput').value || '';
+      const password = document.getElementById('passwordInput').value || '';
+      if(!email || !password) return document.getElementById('loginResult').textContent = 'Fill email and password';
+      document.getElementById('loginResult').textContent = 'Submitting...';
+      try{
+        const r = await fetch('/auth/login/'+sessionId, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password }) }).then(r=>r.json());
+        document.getElementById('loginResult').textContent = JSON.stringify(r);
+      }catch(e){ document.getElementById('loginResult').textContent = 'error: '+(e && e.message?e.message:String(e)); }
     };
 
     document.getElementById('status').onclick = async()=>{
@@ -197,26 +210,6 @@
         await runTests();
       }catch(e){ testsOut.textContent = 'error: '+(e && e.message ? e.message : String(e)); }
     };
-
-      // login form
-      document.getElementById('loginBtn').onclick = async ()=>{
-        if(!sessionId) return document.getElementById('loginOut').textContent = 'no session';
-        const email = document.getElementById('loginEmail').value || '';
-        const password = document.getElementById('loginPassword').value || '';
-        if(!email || !password) return document.getElementById('loginOut').textContent = 'enter email and password';
-        document.getElementById('loginOut').textContent = 'sending...';
-        try{
-          const r = await fetch('/auth/login/'+sessionId, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password }) }).then(r=>r.json());
-          document.getElementById('loginOut').textContent = JSON.stringify(r, null, 2);
-        }catch(e){ document.getElementById('loginOut').textContent = 'error: '+(e && e.message ? e.message : String(e)); }
-      };
-
-      // enable login when session exists
-      const enableLogin = ()=>{ try{ document.getElementById('loginBtn').disabled = !sessionId; }catch(e){} };
-      const oldStart2 = document.getElementById('start').onclick;
-      document.getElementById('start').onclick = async()=>{ await oldStart2(); enableLogin(); };
-      const oldClose2 = document.getElementById('close').onclick;
-      document.getElementById('close').onclick = async()=>{ await oldClose2(); enableLogin(); };
 
     // wire enabling/disabling
     (function patchEnable(){
