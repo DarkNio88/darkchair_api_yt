@@ -6,6 +6,10 @@ Usage
 
  - Install `yt-dlp` on the host (binary must be on PATH).
  - Optionally provide cookies via `YTDLP_COOKIES` env or a `cookies.txt` in the project root.
+ - This module always uses `cookies.txt` from the main project folder (the parent directory of this module).
+	 Place an exported `cookies.txt` there to allow access to restricted videos.
+ - Alternatively you can enable browser cookie extraction by setting `YTDLP_COOKIES_FROM_BROWSER` (but the module prioritizes the project `cookies.txt`).
+	 Example: `YTDLP_COOKIES_FROM_BROWSER=chrome node index.js`
 
 Example
 

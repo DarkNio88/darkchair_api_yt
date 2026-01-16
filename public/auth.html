@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>darkchair_api_yt — Auth</title>
+  <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial;margin:20px}button{margin:6px}</style>
+</head>
+<body>
+  <h2>YouTube Auth</h2>
+  <p>Use this page to start a server-side browser session and export YouTube cookies.</p>
+
+  <div id="out"></div>
+
+  <button id="start">Start auth session</button>
+  <button id="status" disabled>Check status</button>
+  <button id="export" disabled>Export cookies</button>
+  <button id="close" disabled>Close session</button>
+
+  <script>
+    const out = (v)=>{document.getElementById('out').textContent = typeof v === 'string'? v: JSON.stringify(v,null,2)};
+    let sessionId = null;
+
+    document.getElementById('start').onclick = async()=>{
+      out('starting...');
+      const r = await fetch('/auth/start',{method:'POST'}).then(res=>res.json());
+      sessionId = r.id;
+      out(r);
+      document.getElementById('status').disabled = false;
+      document.getElementById('export').disabled = false;
+      document.getElementById('close').disabled = false;
+    };
+
+    document.getElementById('status').onclick = async()=>{
+      if(!sessionId) return out('no session');
+      const r = await fetch('/auth/status/'+sessionId).then(res=>res.json());
+      out(r);
+    };
+
+    document.getElementById('export').onclick = async()=>{
+      if(!sessionId) return out('no session');
+      out('exporting...');
+      const r = await fetch('/auth/export/'+sessionId,{method:'POST'}).then(res=>res.json());
+      out(r);
+    };
+
+    document.getElementById('close').onclick = async()=>{
+      if(!sessionId) return out('no session');
+      const r = await fetch('/auth/close/'+sessionId,{method:'POST'}).then(res=>res.json());
+      out(r);
+      sessionId = null;
+      document.getElementById('status').disabled = true;
+      document.getElementById('export').disabled = true;
+      document.getElementById('close').disabled = true;
+    };
+  </script>
+</body>
+</html>

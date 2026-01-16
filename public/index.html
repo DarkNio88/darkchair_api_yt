@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>darkchair_api_yt — Auth</title>
+  <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial;margin:20px}button{margin:6px}</style>
+</head>
+<body>
+  <h2>YouTube Auth</h2>
+  <p>Use this page to start a server-side browser session and export YouTube cookies.</p>
+
+  <div id="out"></div>
+
+  <button id="start">Start auth session</button>
+  <button id="status" disabled>Check status</button>
+  <button id="export" disabled>Export cookies</button>
+  <button id="close" disabled>Close session</button>
+  <button id="startStreamBtn" disabled>Start Stream</button>
+  <button id="stopStreamBtn" disabled>Stop Stream</button>
+  <button id="runTestsBtn" disabled>Run Stealth Tests</button>
+
+  <div style="margin-top:12px">
+    <h3>Live Preview</h3>
+    <div>
+      <img id="streamImg" alt="stream" tabindex="0" style="max-width:640px;border:1px solid #ccc;display:none;outline:none" />
+    </div>
+  </div>
+
+    <div style="margin-top:12px">
+      <h3>Stealth Detection Tests</h3>
+      <div>
+        <button id="runTestsNow" disabled>Run tests now</button>
+        <button id="openTestBtn" disabled>Open bot-detection page</button>
+        <pre id="testsOut" style="background:#f6f6f6;padding:8px;border:1px solid #ddd;max-width:800px;overflow:auto;">tests output</pre>
+      </div>
+    </div>
+
+  <script>
+    const out = (v)=>{document.getElementById('out').textContent = typeof v === 'string'? v: JSON.stringify(v,null,2)};
+    let sessionId = null;
+
+    document.getElementById('start').onclick = async()=>{
+      out('starting...');
+      try{
+        const r = await fetch('/auth/start',{method:'POST'}).then(res=>res.json());
+        if (!r || r.error) { out(r); return; }
+        sessionId = r.id;
+        out(r);
+        document.getElementById('status').disabled = false;
+        document.getElementById('export').disabled = false;
+        document.getElementById('close').disabled = false;
+        document.getElementById('startStreamBtn').disabled = false;
+        document.getElementById('runTestsBtn').disabled = false;
+        document.getElementById('runTestsNow').disabled = false;
+        document.getElementById('openTestBtn').disabled = false;
+      }catch(e){ out('start error: '+(e && e.message?e.message:String(e))); }
+    };
+
+    document.getElementById('status').onclick = async()=>{
+      if(!sessionId) return out('no session');
+      const r = await fetch('/auth/status/'+sessionId).then(res=>res.json());
+      out(r);
+    };
+
+    document.getElementById('export').onclick = async()=>{
+      if(!sessionId) return out('no session');
+      out('exporting...');
+      const r = await fetch('/auth/export/'+sessionId,{method:'POST'}).then(res=>res.json());
+      out(r);
+    };
+
+    document.getElementById('close').onclick = async()=>{
+      if(!sessionId) return out('no session');
+      const r = await fetch('/auth/close/'+sessionId,{method:'POST'}).then(res=>res.json());
+      out(r);
+      sessionId = null;
+      document.getElementById('status').disabled = true;
+      document.getElementById('export').disabled = true;
+      document.getElementById('close').disabled = true;
+      document.getElementById('startStreamBtn').disabled = true;
+      document.getElementById('stopStreamBtn').disabled = true;
+      document.getElementById('runTestsBtn').disabled = true;
+      document.getElementById('runTestsNow').disabled = true;
+    };
+
+    // Screenshot button
+    // Stream buttons
+    document.getElementById('startStreamBtn').onclick = async()=>{
+      if(!sessionId) return out('no session');
+      const fps = 2;
+      const url = '/auth/stream/'+sessionId+'?fps='+fps;
+      const sImg = document.getElementById('streamImg');
+      sImg.src = url;
+      sImg.style.display = 'block';
+      document.getElementById('stopStreamBtn').disabled = false;
+      document.getElementById('startStreamBtn').disabled = true;
+      document.getElementById('runTestsBtn').disabled = false;
+      document.getElementById('runTestsNow').disabled = false;
+      out('stream started');
+    };
+
+    document.getElementById('stopStreamBtn').onclick = async()=>{
+      const sImg = document.getElementById('streamImg');
+      sImg.src = '';
+      sImg.style.display = 'none';
+      document.getElementById('stopStreamBtn').disabled = true;
+      document.getElementById('startStreamBtn').disabled = false;
+      document.getElementById('runTestsBtn').disabled = true;
+      document.getElementById('runTestsNow').disabled = true;
+      out('stream stopped');
+    };
+
+    // enable/disable stream controls (ensure these exist so overrides don't throw)
+    const enableInputControls = ()=>{
+      try { document.getElementById('startStreamBtn').disabled = false; } catch(e){}
+      try { document.getElementById('stopStreamBtn').disabled = true; } catch(e){}
+    };
+    const disableInputControls = ()=>{
+      try { document.getElementById('startStreamBtn').disabled = true; } catch(e){}
+      try { document.getElementById('stopStreamBtn').disabled = true; } catch(e){}
+    };
+
+    // enable keyboard input directly into the stream image
+    const streamImg = document.getElementById('streamImg');
+    // clicking sets focus on the stream image
+    streamImg.addEventListener('click', (ev)=>{
+      if(!sessionId) return out('no session');
+      streamImg.focus();
+    });
+
+    // clicking sends mouse events as before
+    streamImg.addEventListener('click', async (ev)=>{
+      if(!sessionId) return out('no session');
+      const rect = ev.target.getBoundingClientRect();
+      const px = (ev.clientX - rect.left) / rect.width;
+      const py = (ev.clientY - rect.top) / rect.height;
+      const r = await fetch('/auth/mouse/'+sessionId, { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ action:'click', px, py }) }).then(r=>r.json());
+      out(r);
+    });
+
+    // keyboard handler: send printable chars as 'type', special keys as 'press'
+    const isPrintable = (str) => str.length === 1;
+    const keydownHandler = async (ev)=>{
+      if(!sessionId) return;
+      // ignore modifier-only keys
+      if (ev.key === 'Shift' || ev.key === 'Control' || ev.key === 'Alt' || ev.key === 'Meta') return;
+      ev.preventDefault();
+      if (isPrintable(ev.key)) {
+        await fetch('/auth/keyboard/'+sessionId, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type:'type', text: ev.key }) });
+      } else {
+        // map some keys
+        let keyName = ev.key;
+        if (keyName === 'ArrowLeft') keyName = 'ArrowLeft';
+        if (keyName === 'ArrowRight') keyName = 'ArrowRight';
+        await fetch('/auth/keyboard/'+sessionId, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type:'press', key: keyName }) });
+      }
+    };
+
+    // attach/detach when image gains/loses focus
+    streamImg.addEventListener('focus', ()=>{ document.addEventListener('keydown', keydownHandler); streamImg.style.outline='2px solid #29a'; });
+    streamImg.addEventListener('blur', ()=>{ document.removeEventListener('keydown', keydownHandler); streamImg.style.outline='none'; });
+
+    // stealth tests
+    const testsOut = document.getElementById('testsOut');
+    const runTests = async ()=>{
+      if(!sessionId) return testsOut.textContent = 'no session';
+      testsOut.textContent = 'running tests...';
+      try{
+        const r = await fetch('/auth/tests/'+sessionId).then(r=>r.json());
+        testsOut.textContent = JSON.stringify(r, null, 2);
+      }catch(e){ testsOut.textContent = 'error: '+(e && e.message ? e.message : String(e)); }
+    };
+      document.getElementById('runTestsNow').onclick = runTests;
+    document.getElementById('runTestsBtn').onclick = runTests;
+    document.getElementById('openTestBtn').onclick = async ()=>{
+      if(!sessionId) return testsOut.textContent = 'no session';
+      testsOut.textContent = 'navigating to test page...';
+      try{
+        const r = await fetch('/auth/navigate/'+sessionId, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ url: 'https://www.browserscan.net/it/bot-detection' }) }).then(r=>r.json());
+        if (!r || r.error) {
+          testsOut.textContent = 'navigate failed: '+JSON.stringify(r);
+          return;
+        }
+        testsOut.textContent = 'navigated, running tests...';
+        await runTests();
+      }catch(e){ testsOut.textContent = 'error: '+(e && e.message ? e.message : String(e)); }
+    };
+
+    // wire enabling/disabling
+    (function patchEnable(){
+      const oldStart = document.getElementById('start').onclick;
+      document.getElementById('start').onclick = async()=>{ await oldStart(); enableInputControls(); };
+      const oldClose = document.getElementById('close').onclick;
+      document.getElementById('close').onclick = async()=>{ await oldClose(); disableInputControls(); };
+    })();
+  </script>
+</body>
+</html>

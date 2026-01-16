@@ -4,9 +4,22 @@
   "description": "Minimal wrapper around yt-dlp for streaming and metadata (cookies support).",
   "main": "index.js",
   "scripts": {
-    "test": "node -e \"require('./index').isAvailable().then(v=>console.log('yt-dlp available:',v)).catch(e=>console.error(e))\""
+    "test": "node -e \"require('./index').isAvailable().then(v=>console.log('yt-dlp available:',v)).catch(e=>console.error(e))\"",
+    "auth": "node index.js",
+    "auth:vnc": "bash start-vnc-auth.sh"
   },
-  "keywords": ["yt-dlp","youtube","stream","yt"],
+  "keywords": [
+    "yt-dlp",
+    "youtube",
+    "stream",
+    "yt"
+  ],
   "author": "",
-  "license": "ISC"
+  "license": "ISC",
+  "dependencies": {
+    "express": "latest",
+    "puppeteer": "latest",
+    "puppeteer-extra": "latest",
+    "puppeteer-extra-plugin-stealth": "latest"
+  }
 }
