@@ -1,159 +1,163 @@
 <!doctype html>
-<html lang="en">
+<html lang="it">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>darkchair_api_yt — Auth</title>
-  <style>body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,'Helvetica Neue',Arial;margin:20px}button{margin:6px}</style>
+  <style>
+    :root{
+      --bg:#0f1724; --card:#0b1523; --muted:#9aa4b2; --accent:#4f9ef8; --accent-2:#7de3a8; --glass: rgba(255,255,255,0.04);
+      --radius:10px; --gap:14px; --maxwidth:1100px;
+    }
+    *{box-sizing:border-box}
+    body{font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial; margin:24px; background:linear-gradient(180deg,#071025 0%, #081426 60%); color:#e6eef6}
+    .wrap{max-width:var(--maxwidth);margin:0 auto}
+    header{display:flex;align-items:center;gap:12px;margin-bottom:18px}
+    h1{font-size:20px;margin:0}
+    p.lead{margin:0;color:var(--muted);font-size:13px}
+
+    .grid{display:grid;grid-template-columns:360px 1fr;gap:var(--gap)}
+    .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:var(--radius);padding:16px;border:1px solid rgba(255,255,255,0.04)}
+
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+    input[type=text], input[type=password]{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit}
+    .controls{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+    button.btn{background:var(--accent);color:#042033;border:0;padding:8px 12px;border-radius:8px;cursor:pointer;font-weight:600}
+    button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.04);color:var(--muted)}
+    button.danger{background:#ff6b6b;color:#111}
+    .small{padding:6px 8px;font-size:13px}
+
+    .preview{display:flex;flex-direction:column;gap:12px}
+    .stream-wrap{background:var(--card);border-radius:8px;padding:8px;border:1px solid rgba(255,255,255,0.03);display:flex;align-items:center;justify-content:center;min-height:260px}
+    #streamImg{max-width:100%;border-radius:6px;display:none;outline:none}
+
+    .status-row{display:flex;align-items:center;gap:10px}
+    .badge{background:var(--glass);color:var(--muted);padding:6px 10px;border-radius:999px;font-size:12px}
+    .session-item{cursor:pointer;padding:8px;border-radius:6px;background:rgba(255,255,255,0.01);margin-bottom:8px}
+    .session-item.active{box-shadow:inset 3px 0 0 var(--accent);background:linear-gradient(90deg, rgba(79,158,248,0.04), transparent)}
+
+    pre#out{background:#02121b;padding:10px;border-radius:8px;color:var(--muted);font-size:13px;overflow:auto;max-height:220px}
+
+    @media(max-width:880px){.grid{grid-template-columns:1fr}.wrap{padding:0 12px}}
+  </style>
 </head>
 <body>
-  <h2>YouTube Auth</h2>
-  <p>Use this page to start a server-side browser session and export YouTube cookies.</p>
-
-  <div id="out"></div>
-
-  <div style="margin-top:8px;padding:8px;border:1px solid #eee;max-width:480px;">
-    <strong>Quick Login</strong>
-    <div style="margin-top:6px">
-      <input id="emailInput" placeholder="Email" style="width:100%;padding:6px;margin-bottom:6px" />
-      <input id="passwordInput" type="password" placeholder="Password" style="width:100%;padding:6px;margin-bottom:6px" />
-      <button id="loginBtn" disabled>Submit Login to Session</button>
-      <div id="loginResult" style="margin-top:6px;color:#444;font-size:13px"></div>
-    </div>
-  </div>
-
-  <button id="start">Start auth session</button>
-  <button id="status" disabled>Check status</button>
-  <button id="export" disabled>Export cookies</button>
-  <button id="close" disabled>Close session</button>
-  <button id="startStreamBtn" disabled>Start Stream</button>
-  <button id="stopStreamBtn" disabled>Stop Stream</button>
-  <button id="runTestsBtn" disabled>Run Stealth Tests</button>
-
-  <div style="margin-top:12px">
-    <h3>Live Preview</h3>
-    <div>
-      <img id="streamImg" alt="stream" tabindex="0" style="max-width:640px;border:1px solid #ccc;display:none;outline:none" />
-    </div>
-  </div>
-
-    <div style="margin-top:12px">
-      <h3>Stealth Detection Tests</h3>
+  <div class="wrap">
+    <header>
+      <div style="width:48px;height:48px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;font-weight:700">DC</div>
       <div>
-        <button id="runTestsNow" disabled>Run tests now</button>
-        <button id="openTestBtn" disabled>Open bot-detection page</button>
-        <pre id="testsOut" style="background:#f6f6f6;padding:8px;border:1px solid #ddd;max-width:800px;overflow:auto;">tests output</pre>
+        <h1>darkchair_api_yt — YouTube Auth</h1>
+        <p class="lead">Avvia una sessione browser sul server, effettua il login manuale e poi esporta i cookie per yt-dlp.</p>
       </div>
+    </header>
+
+    <div class="grid">
+      <div class="card">
+        <div class="status-row">
+          <div class="badge" id="statusBadge">Not started</div>
+          <div style="flex:1"></div>
+        </div>
+
+        <div style="margin-top:10px">
+          <strong>Active Sessions</strong>
+          <div id="sessionsList" style="margin-top:8px;color:var(--muted);font-size:13px">Loading...</div>
+        </div>
+
+        <section style="margin-top:12px">
+          <strong>Session Controls</strong>
+          <div class="controls" style="margin-top:8px">
+            <button id="start" class="btn">Start session</button>
+          </div>
+        </section>
+
+        <section style="margin-top:14px">
+          <strong>Stream Preview</strong>
+          <div class="controls" style="margin-top:8px">
+            <button id="scrollUpBtn" class="ghost small" disabled>▲ Scroll Up</button>
+            <button id="scrollDownBtn" class="ghost small" disabled>▼ Scroll Down</button>
+          </div>
+        </section>
+
+        <!-- Quick Login removed -->
+
+        <section style="margin-top:14px">
+          <strong>Diagnostics</strong>
+          <pre id="out">output</pre>
+        </section>
+      </div>
+
+      <div class="preview">
+        <div class="card stream-wrap">
+          <img id="streamImg" alt="stream preview" tabindex="0" />
+        </div>
+        <div class="card" style="padding:10px;display:flex;gap:10px;align-items:center">
+          <div style="flex:1;color:var(--muted);font-size:13px">Live preview FPS is server-controlled. Click image to focus and send keyboard input.</div>
+          <div style="color:var(--muted);font-size:12px">Stream</div>
+        </div>
+      </div>
+
     </div>
+  </div>
 
   <script>
-    const out = (v)=>{document.getElementById('out').textContent = typeof v === 'string'? v: JSON.stringify(v,null,2)};
+    const out = (v)=>{ document.getElementById('out').textContent = typeof v === 'string' ? v : JSON.stringify(v,null,2) };
+    const statusBadge = document.getElementById('statusBadge');
     let sessionId = null;
 
-    document.getElementById('start').onclick = async()=>{
+    const setStatus = (s, cls)=>{ statusBadge.textContent = s; };
+
+        document.getElementById('start').onclick = async()=>{
+      setStatus('Starting...');
       out('starting...');
       try{
         const r = await fetch('/auth/start',{method:'POST'}).then(res=>res.json());
-        if (!r || r.error) { out(r); return; }
+        if (!r || r.error) { out(r); setStatus('Start failed'); return; }
         sessionId = r.id;
         out(r);
-        document.getElementById('status').disabled = false;
-        document.getElementById('export').disabled = false;
-        document.getElementById('close').disabled = false;
-        document.getElementById('startStreamBtn').disabled = false;
-        document.getElementById('runTestsBtn').disabled = false;
-        document.getElementById('runTestsNow').disabled = false;
-        document.getElementById('openTestBtn').disabled = false;
-        document.getElementById('loginBtn').disabled = false;
-      }catch(e){ out('start error: '+(e && e.message?e.message:String(e))); }
+        setStatus('Session active');
+            // Quick login removed; no login button to enable
+            // refresh sessions list
+            try { fetchSessions(); } catch (e) {}
+            // auto-start stream shortly after session starts
+            setTimeout(()=>{ try { startStream(); } catch(e){} }, 400);
+      }catch(e){ out('start error: '+(e && e.message?e.message:String(e))); setStatus('Start error'); }
     };
 
-    // Login button: send credentials to server to auto-fill in Puppeteer session
-    document.getElementById('loginBtn').onclick = async()=>{
-      if(!sessionId) return document.getElementById('loginResult').textContent = 'No active session';
-      const email = document.getElementById('emailInput').value || '';
-      const password = document.getElementById('passwordInput').value || '';
-      if(!email || !password) return document.getElementById('loginResult').textContent = 'Fill email and password';
-      document.getElementById('loginResult').textContent = 'Submitting...';
-      try{
-        const r = await fetch('/auth/login/'+sessionId, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password }) }).then(r=>r.json());
-        document.getElementById('loginResult').textContent = JSON.stringify(r);
-      }catch(e){ document.getElementById('loginResult').textContent = 'error: '+(e && e.message?e.message:String(e)); }
-    };
+    // Quick login handler removed
 
-    document.getElementById('status').onclick = async()=>{
+    // session-level actions are available per-item in the sessions list
+
+    // stream control functions (manual start/stop buttons removed)
+    async function startStream(){
       if(!sessionId) return out('no session');
-      const r = await fetch('/auth/status/'+sessionId).then(res=>res.json());
-      out(r);
-    };
-
-    document.getElementById('export').onclick = async()=>{
-      if(!sessionId) return out('no session');
-      out('exporting...');
-      const r = await fetch('/auth/export/'+sessionId,{method:'POST'}).then(res=>res.json());
-      out(r);
-    };
-
-    document.getElementById('close').onclick = async()=>{
-      if(!sessionId) return out('no session');
-      const r = await fetch('/auth/close/'+sessionId,{method:'POST'}).then(res=>res.json());
-      out(r);
-      sessionId = null;
-      document.getElementById('status').disabled = true;
-      document.getElementById('export').disabled = true;
-      document.getElementById('close').disabled = true;
-      document.getElementById('startStreamBtn').disabled = true;
-      document.getElementById('stopStreamBtn').disabled = true;
-      document.getElementById('runTestsBtn').disabled = true;
-      document.getElementById('runTestsNow').disabled = true;
-    };
-
-    // Screenshot button
-    // Stream buttons
-    document.getElementById('startStreamBtn').onclick = async()=>{
-      if(!sessionId) return out('no session');
-      const fps = 2;
+      const fps = 10;
       const url = '/auth/stream/'+sessionId+'?fps='+fps;
       const sImg = document.getElementById('streamImg');
       sImg.src = url;
       sImg.style.display = 'block';
-      document.getElementById('stopStreamBtn').disabled = false;
-      document.getElementById('startStreamBtn').disabled = true;
-      document.getElementById('runTestsBtn').disabled = false;
-      document.getElementById('runTestsNow').disabled = false;
+      try { document.getElementById('scrollUpBtn').disabled = false; } catch(e){}
+      try { document.getElementById('scrollDownBtn').disabled = false; } catch(e){}
+      setStatus('Streaming');
       out('stream started');
-    };
+    }
 
-    document.getElementById('stopStreamBtn').onclick = async()=>{
+    async function stopStream(){
       const sImg = document.getElementById('streamImg');
-      sImg.src = '';
-      sImg.style.display = 'none';
-      document.getElementById('stopStreamBtn').disabled = true;
-      document.getElementById('startStreamBtn').disabled = false;
-      document.getElementById('runTestsBtn').disabled = true;
-      document.getElementById('runTestsNow').disabled = true;
+      if (sImg) {
+        sImg.src = '';
+        sImg.style.display = 'none';
+      }
+      try { document.getElementById('scrollUpBtn').disabled = true; } catch(e){}
+      try { document.getElementById('scrollDownBtn').disabled = true; } catch(e){}
+      setStatus('Session active');
       out('stream stopped');
-    };
+    }
 
-    // enable/disable stream controls (ensure these exist so overrides don't throw)
-    const enableInputControls = ()=>{
-      try { document.getElementById('startStreamBtn').disabled = false; } catch(e){}
-      try { document.getElementById('stopStreamBtn').disabled = true; } catch(e){}
-    };
-    const disableInputControls = ()=>{
-      try { document.getElementById('startStreamBtn').disabled = true; } catch(e){}
-      try { document.getElementById('stopStreamBtn').disabled = true; } catch(e){}
-    };
+    const enableInputControls = ()=>{ /* no manual stream controls */ };
+    const disableInputControls = ()=>{ /* no manual stream controls */ };
 
-    // enable keyboard input directly into the stream image
     const streamImg = document.getElementById('streamImg');
-    // clicking sets focus on the stream image
-    streamImg.addEventListener('click', (ev)=>{
-      if(!sessionId) return out('no session');
-      streamImg.focus();
-    });
-
-    // clicking sends mouse events as before
+    streamImg.addEventListener('click', (ev)=>{ if(!sessionId) return out('no session'); streamImg.focus(); });
     streamImg.addEventListener('click', async (ev)=>{
       if(!sessionId) return out('no session');
       const rect = ev.target.getBoundingClientRect();
@@ -163,61 +167,95 @@
       out(r);
     });
 
-    // keyboard handler: send printable chars as 'type', special keys as 'press'
     const isPrintable = (str) => str.length === 1;
     const keydownHandler = async (ev)=>{
       if(!sessionId) return;
-      // ignore modifier-only keys
       if (ev.key === 'Shift' || ev.key === 'Control' || ev.key === 'Alt' || ev.key === 'Meta') return;
       ev.preventDefault();
       if (isPrintable(ev.key)) {
         await fetch('/auth/keyboard/'+sessionId, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type:'type', text: ev.key }) });
       } else {
-        // map some keys
         let keyName = ev.key;
-        if (keyName === 'ArrowLeft') keyName = 'ArrowLeft';
-        if (keyName === 'ArrowRight') keyName = 'ArrowRight';
         await fetch('/auth/keyboard/'+sessionId, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type:'press', key: keyName }) });
       }
     };
 
-    // attach/detach when image gains/loses focus
-    streamImg.addEventListener('focus', ()=>{ document.addEventListener('keydown', keydownHandler); streamImg.style.outline='2px solid #29a'; });
+    streamImg.addEventListener('focus', ()=>{ document.addEventListener('keydown', keydownHandler); streamImg.style.outline='2px solid rgba(79,158,248,0.6)'; });
     streamImg.addEventListener('blur', ()=>{ document.removeEventListener('keydown', keydownHandler); streamImg.style.outline='none'; });
 
-    // stealth tests
-    const testsOut = document.getElementById('testsOut');
-    const runTests = async ()=>{
-      if(!sessionId) return testsOut.textContent = 'no session';
-      testsOut.textContent = 'running tests...';
-      try{
-        const r = await fetch('/auth/tests/'+sessionId).then(r=>r.json());
-        testsOut.textContent = JSON.stringify(r, null, 2);
-      }catch(e){ testsOut.textContent = 'error: '+(e && e.message ? e.message : String(e)); }
-    };
-      document.getElementById('runTestsNow').onclick = runTests;
-    document.getElementById('runTestsBtn').onclick = runTests;
-    document.getElementById('openTestBtn').onclick = async ()=>{
-      if(!sessionId) return testsOut.textContent = 'no session';
-      testsOut.textContent = 'navigating to test page...';
-      try{
-        const r = await fetch('/auth/navigate/'+sessionId, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ url: 'https://www.browserscan.net/it/bot-detection' }) }).then(r=>r.json());
-        if (!r || r.error) {
-          testsOut.textContent = 'navigate failed: '+JSON.stringify(r);
-          return;
-        }
-        testsOut.textContent = 'navigated, running tests...';
-        await runTests();
-      }catch(e){ testsOut.textContent = 'error: '+(e && e.message ? e.message : String(e)); }
-    };
+    document.getElementById('scrollUpBtn').onclick = async ()=>{ if(!sessionId) return out('no session'); try{ const r = await fetch('/auth/keyboard/'+sessionId, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'press', key: 'PageUp' }) }).then(r=>r.json()); out(r); }catch(e){ out('scroll error: '+(e && e.message?e.message:String(e))); } };
+    document.getElementById('scrollDownBtn').onclick = async ()=>{ if(!sessionId) return out('no session'); try{ const r = await fetch('/auth/keyboard/'+sessionId, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ type: 'press', key: 'PageDown' }) }).then(r=>r.json()); out(r); }catch(e){ out('scroll error: '+(e && e.message?e.message:String(e))); } };
 
-    // wire enabling/disabling
     (function patchEnable(){
       const oldStart = document.getElementById('start').onclick;
       document.getElementById('start').onclick = async()=>{ await oldStart(); enableInputControls(); };
-      const oldClose = document.getElementById('close').onclick;
-      document.getElementById('close').onclick = async()=>{ await oldClose(); disableInputControls(); };
     })();
+
+    // sessions list polling
+    async function fetchSessions(){
+      try{
+        const r = await fetch('/auth/sessions').then(res=>res.json());
+        const arr = r.sessions || [];
+        const el = document.getElementById('sessionsList');
+        if (!arr.length) { el.textContent = 'No active sessions'; return; }
+        el.innerHTML = arr.map(s => {
+          const dt = s.startedAt ? new Date(s.startedAt).toLocaleString() : '-';
+          const url = s.url ? ` • ${s.url}` : '';
+          const active = (sessionId === s.id) ? ' active' : '';
+          return `<div class="session-item${active}" onclick="selectSession('${s.id}')">
+                    <div style="display:flex;justify-content:space-between;align-items:center">
+                      <strong style="font-size:13px">${s.id}</strong>
+                      <div style="display:flex;gap:6px">
+                        <button class="ghost small" onclick="event.stopPropagation(); sessionStatus('${s.id}')">Check</button>
+                        <button class="ghost small" onclick="event.stopPropagation(); sessionExport('${s.id}')">Export</button>
+                        
+                        <button class="danger small" onclick="event.stopPropagation(); sessionClose('${s.id}')">Close</button>
+                      </div>
+                    </div>
+                    <div style="color:var(--muted);font-size:12px;margin-top:6px">started: ${dt}${url}</div>
+                  </div>`;
+        }).join('');
+      }catch(e){ console.error('fetchSessions error', e); }
+    }
+    // initial load and polling
+    try{ fetchSessions(); setInterval(fetchSessions, 5000); } catch (e) {}
+    // select a session for preview
+    function selectSession(id){
+      try { sessionId = id; } catch(e){}
+      try { fetchSessions(); } catch(e){}
+      try { stopStream(); } catch(e){}
+      try { startStream(); } catch(e){}
+      setStatus('Selected: '+id);
+    }
+    
+    // per-session actions
+    async function sessionStatus(id){
+      try{
+        const r = await fetch('/auth/status/'+id).then(res=>res.json());
+        out(r);
+      }catch(e){ out('status error: '+(e && e.message?e.message:String(e))); }
+    }
+
+    async function sessionExport(id){
+      try{
+        const r = await fetch('/auth/export/'+id,{method:'POST'}).then(res=>res.json());
+        out(r);
+        try{ fetchSessions(); } catch(e){}
+      }catch(e){ out('export error: '+(e && e.message?e.message:String(e))); }
+    }
+
+    async function sessionClose(id){
+      try{
+        if (!confirm('Close session '+id+' ?')) return;
+        const r = await fetch('/auth/close/'+id,{method:'POST'}).then(res=>res.json());
+        out(r);
+        // if the closed session was being previewed, stop preview
+        if (sessionId === id) { try{ stopStream(); sessionId = null; } catch(e){} }
+        try{ fetchSessions(); } catch(e){}
+      }catch(e){ out('close error: '+(e && e.message?e.message:String(e))); }
+    }
+
+    // previewSession removed — selecting a session already starts the preview
   </script>
 </body>
 </html>

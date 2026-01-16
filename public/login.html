@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>darkchair_api_yt — Login</title>
+  <style>
+    :root{--bg:#071427;--card:#071d2b;--muted:#9aa4b2;--accent:#4f9ef8;--accent-2:#7de3a8;--radius:12px}
+    *{box-sizing:border-box}
+    body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:linear-gradient(180deg,#041225 0%, #071427 100%);font-family:Inter,system-ui,Arial;color:#e6eef6}
+    .card{width:420px;background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:var(--radius);padding:22px;border:1px solid rgba(255,255,255,0.04);box-shadow:0 6px 30px rgba(2,6,12,0.6)}
+    .logo{width:56px;height:56px;border-radius:12px;background:linear-gradient(135deg,var(--accent),var(--accent-2));display:flex;align-items:center;justify-content:center;font-weight:700;margin-bottom:14px}
+    h1{margin:0 0 6px 0;font-size:18px}
+    p.lead{margin:0 0 16px 0;color:var(--muted);font-size:13px}
+    label{display:block;font-size:12px;color:var(--muted);margin-bottom:6px}
+    input{width:100%;padding:10px;border-radius:10px;border:1px solid rgba(255,255,255,0.03);background:transparent;color:inherit;margin-bottom:12px}
+    .row{display:flex;gap:10px;align-items:center}
+    button.btn{flex:1;background:var(--accent);color:#042033;border:0;padding:10px 12px;border-radius:10px;cursor:pointer;font-weight:700}
+    .small{font-size:13px;color:var(--muted);text-align:center;margin-top:10px}
+    .foot{margin-top:12px;font-size:12px;color:#7f8b99;text-align:center}
+    @media(max-width:480px){.card{width:92vw;padding:16px}}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div style="display:flex;align-items:center;gap:12px">
+      <div class="logo">DC</div>
+      <div>
+        <h1>Login — darkchair_api_yt</h1>
+        <p class="lead">Accedi per gestire le sessioni di autenticazione YouTube sul server.</p>
+      </div>
+    </div>
+
+    <form method="POST" action="/auth/ui/login" style="margin-top:14px">
+      <label for="username">Username</label>
+      <input id="username" name="username" type="text" placeholder="es: alice" autocomplete="username" />
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" placeholder="Password" autocomplete="current-password" />
+      <div class="row">
+        <button class="btn" type="submit">Accedi</button>
+      </div>
+    </form>
+
+    <div class="foot">Usa le credenziali definite da <code>AUTH_UI_USERS</code> o <code>AUTH_UI_PASSWORD</code>.</div>
+  </div>
+
+  <script>
+    // autofocus username for convenience
+    try { document.getElementById('username').focus(); } catch(e){}
+  </script>
+</body>
+</html>

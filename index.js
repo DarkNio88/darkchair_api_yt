@@ -191,7 +191,7 @@ function cookiesToNetscape(cookies) {
 function createAuthApp() {
   const app = express();
   app.use(express.json());
-  // simple UI auth sessions (token -> createdAt)
+  // simple UI auth sessions (token -> { createdAt, username })
   const UI_SESSIONS = new Map();
   const SESSIONS = new Map();
 
@@ -206,32 +206,65 @@ function createAuthApp() {
     return null;
   }
 
-  // protect the UI with a simple password if AUTH_UI_PASSWORD is set
   app.use('/auth/ui', (req, res, next) => {
-    const pw = process.env.AUTH_UI_PASSWORD;
-    console.log('AUTH_UI_PASSWORD:', pw ? pw : 'not set'); 
-    if (!pw) return next();
+    // multi-user UI auth: support AUTH_UI_USERS (comma-separated user:pass)
+    // fallback to single AUTH_UI_PASSWORD for legacy setups
+    const usersCfg = process.env.AUTH_UI_USERS || '';
+    const singlePw = process.env.AUTH_UI_PASSWORD || '';
+    // if no auth configured, allow through
+    if (!usersCfg && !singlePw) return next();
     // allow the login POST path without cookie
     if (req.path === '/login' || req.path === '/login.html') return next();
     const token = _getUiCookie(req);
-    if (token && UI_SESSIONS.has(token)) return next();
-    // serve a minimal login page
+    if (token) {
+      const sess = UI_SESSIONS.get(token);
+      if (sess) return next();
+    }
+    // serve a minimal multi-user login page
+    // if a static login.html exists in the public folder, serve it (nicer UI)
+    try {
+      const loginPath = path.join(__dirname, 'public', 'login.html');
+      if (fs.existsSync(loginPath)) {
+        const html = fs.readFileSync(loginPath, 'utf8');
+        res.setHeader('Content-Type', 'text/html; charset=utf-8');
+        return res.end(html);
+      }
+    } catch (e) {}
+    // fallback to a minimal inline page
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    return res.end(`<!doctype html><html><head><meta charset="utf-8"><title>Login</title></head><body style="font-family:system-ui,Arial;margin:20px"><h3>Auth UI Login</h3><form method="POST" action="/auth/ui/login"><input name="password" type="password" placeholder="Password" style="padding:8px;width:300px" /><button type="submit" style="margin-left:8px;padding:8px 12px">Login</button></form></body></html>`);
+    return res.end(`<!doctype html><html><head><meta charset="utf-8"><title>Login</title></head><body style="font-family:system-ui,Arial;margin:20px"><h3>Auth UI Login</h3><form method="POST" action="/auth/ui/login"><div style="margin-bottom:8px"><input name="username" type="text" placeholder="Username" style="padding:8px;width:300px" /></div><div style="margin-bottom:8px"><input name="password" type="password" placeholder="Password" style="padding:8px;width:300px" /></div><button type="submit" style="padding:8px 12px">Login</button></form></body></html>`);
   });
 
   // serve simple auth UI
   app.use('/auth/ui', express.static(path.join(__dirname, 'public')));
 
-  // login handler for the UI form
+  // login handler for the UI form (supports multi-user via AUTH_UI_USERS)
   app.post('/auth/ui/login', express.urlencoded({ extended: false }), (req, res) => {
-    const pw = process.env.AUTH_UI_PASSWORD;
-    if (!pw) return res.status(400).send('UI login not enabled');
-    const provided = String(req.body.password);
-    console.log('Auth UI login attempt with password:', provided ,pw);
-    if (provided !== pw) return res.status(401).send('Invalid password');
+    const usersCfg = process.env.AUTH_UI_USERS;
+    const singlePw = process.env.AUTH_UI_PASSWORD;
+    //if (!usersCfg && !singlePw) return res.status(400).send('UI login not enabled');
+    const providedUser = String(req.body.username || '').trim();
+    const providedPw = String(req.body.password || '');
+
+    let allowed = false;
+    let username = providedUser;
+    if (usersCfg) {
+      // parse users e.g. "alice:pass,bob:secret"
+      const parts = usersCfg.split(',').map(s=>s.trim()).filter(Boolean);
+      for (const p of parts) {
+        const idx = p.indexOf(':');
+        if (idx === -1) continue;
+        const u = p.slice(0, idx);
+        const pw = p.slice(idx+1);
+        if (u == providedUser && pw == providedPw) { allowed = true; username = u; break; }
+      }
+    } else if (singlePw) {
+      if (providedPw == singlePw) allowed = true;
+    }
+
+    if (!allowed) return res.status(401).send('Invalid credentials');
     const token = makeId();
-    UI_SESSIONS.set(token, Date.now());
+    UI_SESSIONS.set(token, { createdAt: Date.now(), username });
     // set cookie for 24h (Path=/ so it's sent for all auth UI requests)
     const maxAge = 24 * 60 * 60 * 1000;
     res.setHeader('Set-Cookie', `darkchair_ui=${token}; Path=/; HttpOnly; Max-Age=${Math.floor(maxAge/1000)}`);
@@ -274,9 +307,59 @@ function createAuthApp() {
 
       const launchOpts = { headless, args: launchArgs, product };
       if (execPath) launchOpts.executablePath = execPath;
-      // support persistent profile (user-data-dir) to keep session across restarts
-      const profileDir = process.env.PUPPETEER_PROFILE || process.env.PUPPETEER_USER_DATA_DIR || null;
-      if (profileDir) launchOpts.userDataDir = profileDir;
+      // support per-session persistent profile directories to allow multiple concurrent sessions
+      // baseProfileEnv may point to a template profile; we'll copy it per-session into PROJECT_ROOT/.profiles/<id>
+      const profileEnv = process.env.PUPPETEER_PROFILE || process.env.PUPPETEER_USER_DATA_DIR || null;
+      const profilesRoot = path.join(PROJECT_ROOT, '.profiles');
+      try { if (!fs.existsSync(profilesRoot)) fs.mkdirSync(profilesRoot, { recursive: true }); } catch (e) {}
+      const sessionProfileDir = path.join(profilesRoot, id);
+      let ownedProfile = false;
+      try {
+        // helper: remove known lock/socket files from a directory tree
+        const removeLockFiles = (root) => {
+          try {
+            const names = ['SingletonLock', 'SingletonSocket', 'lock', 'LOCK', 'parent.lock'];
+            const walk = (dir) => {
+              let entries = [];
+              try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch (e) { return; }
+              for (const ent of entries) {
+                const p = path.join(dir, ent.name);
+                if (ent.isDirectory()) {
+                  walk(p);
+                } else {
+                  if (names.includes(ent.name)) {
+                    try { fs.rmSync(p, { force: true }); } catch (e) {}
+                  }
+                }
+              }
+            };
+            walk(root);
+          } catch (e) {}
+        };
+
+        if (profileEnv) {
+          // resolve relative paths against project root
+          const resolved = path.isAbsolute(profileEnv) ? profileEnv : path.join(PROJECT_ROOT, profileEnv);
+          if (fs.existsSync(resolved)) {
+            // copy template profile into session directory (may be large)
+            try {
+              fs.cpSync(resolved, sessionProfileDir, { recursive: true });
+              // remove any leftover lock/socket files copied from the template
+              removeLockFiles(sessionProfileDir);
+              ownedProfile = true;
+            } catch (e) {
+              try { fs.mkdirSync(sessionProfileDir, { recursive: true }); ownedProfile = true; } catch (err) {}
+            }
+          } else {
+            // no template found, still create an empty session dir
+            try { fs.mkdirSync(sessionProfileDir, { recursive: true }); ownedProfile = true; } catch (e) {}
+          }
+        } else {
+          // no base profile specified, create isolated session dir to avoid conflicts
+          try { fs.mkdirSync(sessionProfileDir, { recursive: true }); ownedProfile = true; } catch (e) {}
+        }
+      } catch (e) {}
+      if (fs.existsSync(sessionProfileDir)) launchOpts.userDataDir = sessionProfileDir;
 
       const browser = await puppeteer.launch(launchOpts);
       const page = await browser.newPage();
@@ -391,7 +474,7 @@ function createAuthApp() {
         } catch (e) {}
       });
       await page.goto('https://accounts.google.com/ServiceLogin?service=youtube', { waitUntil: 'networkidle2' });
-      SESSIONS.set(id, { browser, page, startedAt: Date.now() });
+      SESSIONS.set(id, { browser, page, startedAt: Date.now(), profileDir: fs.existsSync(sessionProfileDir) ? sessionProfileDir : null, ownedProfile });
       const ws = browser.wsEndpoint ? browser.wsEndpoint() : null;
       const httpJsonUrl = `http://${debugHost}:${debugPort}/json`;
       res.json({ id, message: 'Browser opened. Complete login in the opened window on the server.', wsEndpoint: ws, debugPort, httpJsonUrl });
@@ -420,14 +503,14 @@ function createAuthApp() {
       }
       const out = cookiesToNetscape(list);
       fs.writeFileSync(COOKIES_FILE, out, 'utf8');
-      // If a persistent profile is used, keep the browser open so session persists.
-      const profileDir = process.env.PUPPETEER_PROFILE || process.env.PUPPETEER_USER_DATA_DIR || null;
-      if (!profileDir) {
+      // If the session had its own profileDir and it was created by us, keep the browser open
+      // otherwise (no profileDir) close browser and remove session.
+      const sessProfile = sess.profileDir || null;
+      if (!sessProfile) {
         try { await browser.close(); } catch (e) {}
         SESSIONS.delete(id);
       } else {
-        // keep session in memory mapped so user can continue using it
-        // update startedAt to now
+        // keep session alive and update timestamp
         sess.startedAt = Date.now();
         SESSIONS.set(id, sess);
       }
@@ -443,6 +526,21 @@ function createAuthApp() {
     const sess = SESSIONS.get(id);
     if (!sess) return res.status(404).json({ error: 'session not found' });
     res.json({ id, startedAt: sess.startedAt });
+  });
+
+  // GET /auth/sessions -> list active sessions
+  app.get('/auth/sessions', (req, res) => {
+    try {
+      const arr = [];
+      for (const [id, sess] of SESSIONS.entries()) {
+        let url = null;
+        try { url = (sess.page && typeof sess.page.url === 'function') ? sess.page.url() : null; } catch (e) { url = null; }
+        arr.push({ id, startedAt: sess.startedAt, url });
+      }
+      return res.json({ sessions: arr });
+    } catch (e) {
+      return res.status(500).json({ error: 'failed to list sessions' });
+    }
   });
 
     // GET /auth/tests/:id -> run stealth detection checks on the page
@@ -589,14 +687,34 @@ function createAuthApp() {
     const captureAndWrite = async () => {
       if (stopped) return;
       try {
-        const buf = await sess.page.screenshot({ type: 'jpeg', quality: 60 });
+        // Re-resolve the session in case it was closed/removed elsewhere
+        const current = SESSIONS.get(id);
+        if (!current) {
+          stopped = true; try { res.end(); } catch (er) {}
+          return;
+        }
+        // If the page or browser was closed elsewhere, stop the stream
+        if (!current.page || (typeof current.page.isClosed === 'function' && current.page.isClosed()) || !current.browser || (typeof current.browser.isConnected === 'function' && !current.browser.isConnected())) {
+          stopped = true; try { res.end(); } catch (er) {}
+          return;
+        }
+
+        const buf = await current.page.screenshot({ type: 'jpeg', quality: 60 });
         res.write('--frame\r\n');
         res.write('Content-Type: image/jpeg\r\n');
         res.write('Content-Length: ' + buf.length + '\r\n\r\n');
         res.write(buf);
         res.write('\r\n');
       } catch (e) {
-        console.error('auth-server: stream capture error', e && e.message ? e.message : e);
+        const msg = e && e.message ? e.message : String(e);
+        // Common benign reasons to stop: session/page closed or protocol errors during shutdown
+        if (/Session closed|Session is closed|Target closed|Protocol error/i.test(msg)) {
+          stopped = true;
+          try { res.end(); } catch (er) {}
+          return;
+        }
+        console.error('auth-server: stream capture error', msg);
+        // On other errors, end the stream gracefully
         stopped = true;
         try { res.end(); } catch (er) {}
       }
@@ -681,6 +799,12 @@ function createAuthApp() {
     const sess = SESSIONS.get(id);
     if (!sess) return res.status(404).json({ error: 'session not found' });
     try { await sess.browser.close(); } catch (e) {}
+    // cleanup per-session profile dir if we created it
+    try {
+      if (sess && sess.profileDir && sess.ownedProfile) {
+        try { fs.rmSync(sess.profileDir, { recursive: true, force: true }); } catch (e) {}
+      }
+    } catch (e) {}
     SESSIONS.delete(id);
     res.json({ closed: true });
   });
