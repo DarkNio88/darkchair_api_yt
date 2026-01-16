@@ -27,6 +27,17 @@
     </div>
   </div>
 
+  <div style="margin-top:12px">
+    <h3>Quick Login (convenience)</h3>
+    <p>Optional: send credentials to the server-side browser session to attempt login. Google may block automated input.</p>
+    <div>
+      <input id="loginEmail" placeholder="email" style="width:300px;margin:4px" />
+      <input id="loginPassword" placeholder="password" type="password" style="width:300px;margin:4px" />
+      <button id="loginBtn" disabled>Send Login</button>
+      <pre id="loginOut" style="background:#f6f6f6;padding:8px;border:1px solid #ddd;max-width:800px;overflow:auto;">login status</pre>
+    </div>
+  </div>
+
     <div style="margin-top:12px">
       <h3>Stealth Detection Tests</h3>
       <div>
@@ -186,6 +197,26 @@
         await runTests();
       }catch(e){ testsOut.textContent = 'error: '+(e && e.message ? e.message : String(e)); }
     };
+
+      // login form
+      document.getElementById('loginBtn').onclick = async ()=>{
+        if(!sessionId) return document.getElementById('loginOut').textContent = 'no session';
+        const email = document.getElementById('loginEmail').value || '';
+        const password = document.getElementById('loginPassword').value || '';
+        if(!email || !password) return document.getElementById('loginOut').textContent = 'enter email and password';
+        document.getElementById('loginOut').textContent = 'sending...';
+        try{
+          const r = await fetch('/auth/login/'+sessionId, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password }) }).then(r=>r.json());
+          document.getElementById('loginOut').textContent = JSON.stringify(r, null, 2);
+        }catch(e){ document.getElementById('loginOut').textContent = 'error: '+(e && e.message ? e.message : String(e)); }
+      };
+
+      // enable login when session exists
+      const enableLogin = ()=>{ try{ document.getElementById('loginBtn').disabled = !sessionId; }catch(e){} };
+      const oldStart2 = document.getElementById('start').onclick;
+      document.getElementById('start').onclick = async()=>{ await oldStart2(); enableLogin(); };
+      const oldClose2 = document.getElementById('close').onclick;
+      document.getElementById('close').onclick = async()=>{ await oldClose2(); enableLogin(); };
 
     // wire enabling/disabling
     (function patchEnable(){

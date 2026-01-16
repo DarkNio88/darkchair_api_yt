@@ -3,3 +3,4 @@ node_modules/
 npm-debug.log
 DST
 .DS_Store
+cookies.txt

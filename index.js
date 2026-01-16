@@ -10,7 +10,14 @@ function _cookiesArg(opts = {}) {
   if (!fs.existsSync(cookiesPath)) {
     console.error('darkchair_api_yt: cookies.txt non trovato in project root:', cookiesPath);
   }
-  return ['--cookies-from-browser', 'firefox', '--cookies', cookiesPath ];
+  // By default prefer using an explicit cookies file written by the auth UI (`--cookies`)
+  // Set USE_COOKIES_FROM_BROWSER=1 to also ask yt-dlp to extract from an installed browser profile.
+  const useFromBrowser = (process.env.USE_COOKIES_FROM_BROWSER === '1' || process.env.USE_COOKIES_FROM_BROWSER === 'true');
+  if (useFromBrowser) {
+    const product = process.env.PUPPETEER_PRODUCT || 'firefox';
+    return ['--cookies-from-browser', product, '--cookies', cookiesPath];
+  }
+  return ['--cookies', cookiesPath];
 }
 
 function isAvailable() {
@@ -22,14 +29,11 @@ function isAvailable() {
 }
 
 function stream(url, opts = {}) {
-  const preferred = opts.format || 'bestaudio/best';
+  const preferred = opts.format || null; // allow caller to pass a specific format id or expression
   const fallbacks = [
     'bestaudio/best',
     'bestaudio',
-    'best',
-    'bestaudio[ext=m4a]/bestaudio',
-    'bestaudio[ext=webm]/bestaudio',
-    'bestaudio[ext=opus]/bestaudio'
+    'best'
   ];
   const cookies = _cookiesArg(opts);
 
@@ -38,7 +42,7 @@ function stream(url, opts = {}) {
   let currentProc = null;
 
   const trySpawn = (fmt) => {
-    const args = ['-o', '-', '-f', fmt, '--no-playlist', '--no-warnings', url];
+    const args = ['-o', '-', '-f', fmt, '--no-playlist', '--no-warnings', '--js-runtimes', 'node', url];
     if (cookies.length) args.splice(0, 0, ...cookies);
     const proc = spawn('yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     currentProc = proc;
@@ -57,10 +61,8 @@ function stream(url, opts = {}) {
 
     proc.on('close', (code, signal) => {
       if (code === 0) {
-        // streaming finished normally
         try { outStream.end(); } catch (e) {}
       } else {
-        // try next fallback if available
         tried += 1;
         if (tried < fallbacks.length) {
           const nextFmt = fallbacks[tried];
@@ -76,16 +78,73 @@ function stream(url, opts = {}) {
     return proc;
   };
 
-  // start first attempt (preferred format first)
-  const firstFmt = preferred || fallbacks[0];
-  const proc = trySpawn(firstFmt);
+  // Helper: pick best audio-only format from yt-dlp info
+  const pickBestAudioFormat = (formats) => {
+    if (!Array.isArray(formats) || formats.length === 0) return null;
+    // prefer audio-only formats (vcodec none) and prioritize by extension and bitrate
+    const preferExts = ['opus', 'webm', 'm4a', 'mp3'];
+    const audioOnly = formats.filter(f => {
+      try {
+        const v = (f.vcodec || '').toLowerCase();
+        return !v || v === 'none' || v === 'unknown';
+      } catch (e) { return false; }
+    });
+    if (audioOnly.length === 0) return null;
+    audioOnly.sort((a, b) => {
+      const ia = preferExts.indexOf((a.ext || '').toLowerCase());
+      const ib = preferExts.indexOf((b.ext || '').toLowerCase());
+      const pa = ia === -1 ? preferExts.length : ia;
+      const pb = ib === -1 ? preferExts.length : ib;
+      if (pa !== pb) return pa - pb;
+      const abrA = a.abr || a.tbr || 0;
+      const abrB = b.abr || b.tbr || 0;
+      if (abrB !== abrA) return abrB - abrA;
+      return (b.filesize || 0) - (a.filesize || 0);
+    });
+    return audioOnly[0] && (audioOnly[0].format_id || audioOnly[0].format) ? (audioOnly[0].format_id || audioOnly[0].format) : null;
+  };
+
+  // asynchronously choose format via getInfo, then spawn yt-dlp
+  (async () => {
+    try {
+      let fmtToUse = null;
+      // If caller passed a numeric/explicit format id, use it directly
+      if (preferred && /^\d+$/.test(String(preferred))) {
+        fmtToUse = String(preferred);
+      } else if (preferred && typeof preferred === 'string') {
+        // if preferred looks like a full yt-dlp expression, try it first
+        fmtToUse = preferred;
+      } else {
+        // try to select best audio format using getInfo
+        try {
+          const info = await getInfo(url);
+          if (info && Array.isArray(info.formats)) {
+            const picked = pickBestAudioFormat(info.formats);
+            if (picked) fmtToUse = picked;
+          }
+        } catch (e) {
+          // fall through to default
+          console.warn('darkchair_api_yt: getInfo failed while selecting format, falling back', e && e.message ? e.message : e);
+        }
+      }
+
+      // fallback to generic expressions if selection failed
+      if (!fmtToUse) fmtToUse = fallbacks[0];
+
+      trySpawn(fmtToUse);
+    } catch (e) {
+      console.error('darkchair_api_yt: async format selection error', e && e.message ? e.message : e);
+      // as a last resort start with the generic format
+      trySpawn(fallbacks[0]);
+    }
+  })();
 
   return { stream: outStream, proc: { current: () => currentProc } };
 }
 
 async function getInfo(url, opts = {}) {
   return new Promise((resolve) => {
-    const args = ['--dump-json', '--no-playlist', '--no-warnings', url];
+    const args = ['--dump-json', '--js-runtimes', 'node', '--no-playlist', '--no-warnings', url];
     const cookies = _cookiesArg(opts);
     if (cookies.length) args.splice(0, 0, ...cookies);
     console.log('darkchair_api_yt: getInfo spawn yt-dlp with args:', args.join(' '));
@@ -402,6 +461,65 @@ function createAuthApp() {
       } catch (e) {
         console.error('auth-server: navigate error', e && e.message ? e.message : e);
         return res.status(500).json({ error: 'navigate failed', detail: e && e.message ? e.message : String(e) });
+      }
+    });
+
+    // POST /auth/login/:id -> attempt to fill login form (email/password) in the session page
+    app.post('/auth/login/:id', async (req, res) => {
+      const id = req.params.id;
+      const sess = SESSIONS.get(id);
+      if (!sess) return res.status(404).json({ error: 'session not found' });
+      try {
+        const body = req.body || {};
+        const email = String(body.email || '').trim();
+        const password = String(body.password || '').trim();
+        if (!email || !password) return res.status(400).json({ error: 'missing email or password' });
+        const { page } = sess;
+
+        // Try common selectors for Google account login flow
+        const emailSelectors = ['input[type="email"]', '#identifierId', 'input[name="identifier"]', 'input#Email'];
+        let emailFilled = false;
+        for (const sel of emailSelectors) {
+          try {
+            const el = await page.$(sel);
+            if (el) {
+              await page.focus(sel);
+              await page.keyboard.type(email, { delay: 80 });
+              await page.keyboard.press('Enter');
+              emailFilled = true;
+              break;
+            }
+          } catch (e) { /* ignore */ }
+        }
+        if (!emailFilled) {
+          try { await page.evaluate(e => { const i = document.querySelector('input[type=email]'); if (i) { i.focus(); i.value = e; } }, email); await page.keyboard.press('Enter'); } catch (e) {}
+
+        // wait a bit for the password field to appear
+        await page.waitForTimeout(2000);
+
+        const passwordSelectors = ['input[type="password"]', 'input[name="password"]', '#password input'];
+        let pwdFilled = false;
+        for (const sel of passwordSelectors) {
+          try {
+            const el = await page.$(sel);
+            if (el) {
+              await page.focus(sel);
+              await page.keyboard.type(password, { delay: 80 });
+              await page.keyboard.press('Enter');
+              pwdFilled = true;
+              break;
+            }
+          } catch (e) { /* ignore */ }
+        }
+        if (!pwdFilled) {
+          try { await page.evaluate(p => { const i = document.querySelector('input[type=password]'); if (i) { i.focus(); i.value = p; } }, password); await page.keyboard.press('Enter'); } catch (e) {}
+
+        // allow some time for navigation/verification
+        await page.waitForTimeout(3000);
+        return res.json({ ok: true, emailProvided: !!email, passwordProvided: !!password });
+      } catch (e) {
+        console.error('auth-server: login error', e && e.message ? e.message : e);
+        return res.status(500).json({ error: 'login failed', detail: e && e.message ? e.message : String(e) });
       }
     });
   // GET /auth/screenshot/:id -> single PNG screenshot of the auth page
