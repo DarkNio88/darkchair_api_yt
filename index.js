@@ -12,6 +12,7 @@ const path = require('path');
 function _cookiesArg(opts = {}) {
   // Otherwise force the use of cookies.txt in the project root (parent of this module)
   const projectRoot = path.resolve(__dirname, '..');
+  console.log('darkchair_api_yt: using project root for cookies:', projectRoot);
   const cookiesPath = path.join(projectRoot, 'cookies.txt');
   if (!fs.existsSync(cookiesPath)) {
     console.error('darkchair_api_yt: cookies.txt non trovato in project root:', cookiesPath);
