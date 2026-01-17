@@ -2,6 +2,8 @@
 
 Tiny Node helper around `yt-dlp` to fetch metadata and stream audio to stdout.
 
+[![ko-fi](https://ko-fi.com/img/githubbutton_sm.svg)](https://ko-fi.com/Y8Y31SFJ81)
+
 Usage
 
  - Install `yt-dlp` on the host (binary must be on PATH).
