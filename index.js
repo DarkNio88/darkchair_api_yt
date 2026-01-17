@@ -77,7 +77,7 @@ function stream(url, opts = {}) {
   let currentProc = null;
 
   const trySpawn = (fmt) => {
-    const args = ['-o', '-', '-f', fmt,  '--no-warnings', '--js-runtimes', 'node', url];
+    const args = ['-o', '-', '-f', fmt, '--no-playlist', '--no-warnings', '--js-runtimes', 'node', url];
     if (cookies.length) args.splice(0, 0, ...cookies);
     const proc = spawn('yt-dlp', args, { stdio: ['ignore', 'pipe', 'pipe'] });
     currentProc = proc;
@@ -179,7 +179,7 @@ function stream(url, opts = {}) {
 
 async function getInfo(url, opts = {}) {
   return new Promise((resolve) => {
-    const args = ['--dump-json', '--js-runtimes', 'node',  '--no-warnings', url];
+    const args = ['--dump-json', '--js-runtimes', 'node', '--no-playlist', '--no-warnings', url];
     const cookies = _cookiesArg(opts);
     if (cookies.length) args.splice(0, 0, ...cookies);
     console.log('darkchair_api_yt: getInfo spawn yt-dlp with args:', args.join(' '));
