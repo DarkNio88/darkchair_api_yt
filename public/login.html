@@ -36,8 +36,11 @@
     </div>
 
     <form method="POST" action="/auth/ui/login" style="margin-top:14px">
+      <div id="errorBox" style="display:none;background:#ffebee;color:#6b000c;padding:10px;border-radius:8px;margin-bottom:12px;font-size:13px">Credenziali non valide. Riprova.</div>
+      <div id="blockedBox" style="display:none;background:#fff4e5;color:#6b3e00;padding:10px;border-radius:8px;margin-bottom:12px;font-size:13px">Troppi tentativi. Riprova più tardi.</div>
       <label for="username">Username</label>
       <input id="username" name="username" type="text" placeholder="es: alice" autocomplete="username" />
+      <div id="attemptsInfo" style="color:var(--muted);font-size:13px;margin:6px 0 8px 0">Tentativi rimasti: —</div>
       <label for="password">Password</label>
       <input id="password" name="password" type="password" placeholder="Password" autocomplete="current-password" />
       <div class="row">
@@ -52,6 +55,44 @@
   <script>
     // autofocus username for convenience
     try { document.getElementById('username').focus(); } catch(e){}
+    // show error banner when redirected with ?error=1 or blocked
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('error')) {
+        const box = document.getElementById('errorBox'); if (box) box.style.display = 'block';
+      }
+      if (params.get('error') === 'blocked' || params.get('error') === '1' && params.get('blocked')) {
+        const b = document.getElementById('blockedBox'); if (b) b.style.display = 'block';
+      }
+    } catch (e) {}
+
+    // helper: debounce
+    function debounce(fn, wait){ let t; return (...args)=>{ clearTimeout(t); t=setTimeout(()=>fn.apply(this,args), wait); }; }
+
+    async function fetchAttempts(username){
+      try{
+        const url = '/auth/login/attempts' + (username ? ('?username='+encodeURIComponent(username)) : '');
+        const r = await fetch(url).then(r=>r.json());
+        if (!r) return;
+        const info = document.getElementById('attemptsInfo');
+        const blockedBox = document.getElementById('blockedBox');
+        const errorBox = document.getElementById('errorBox');
+        if (r.blockedUntil && r.blockedUntil > Date.now()){
+          const until = new Date(r.blockedUntil).toLocaleString();
+          if (info) info.textContent = `Tentativi rimasti: 0 (sblocco: ${until})`;
+          if (blockedBox) blockedBox.style.display = 'block';
+          if (errorBox) errorBox.style.display = 'none';
+        } else {
+          if (info) info.textContent = `Tentativi rimasti: ${r.remaining} di ${r.max}`;
+          if (blockedBox) blockedBox.style.display = 'none';
+        }
+      }catch(e){ /* ignore */ }
+    }
+
+    const debFetch = debounce(()=>{ try{ fetchAttempts(document.getElementById('username').value.trim()); }catch(e){} }, 350);
+    try { document.getElementById('username').addEventListener('input', debFetch); } catch(e){}
+    // initial probe (by IP)
+    try { fetchAttempts(''); } catch(e){}
   </script>
 </body>
 </html>

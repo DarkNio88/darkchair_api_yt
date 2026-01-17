@@ -5,8 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "node -e \"require('./index').isAvailable().then(v=>console.log('yt-dlp available:',v)).catch(e=>console.error(e))\"",
-    "auth": "node index.js",
-    "auth:vnc": "bash start-vnc-auth.sh"
+    "auth": "xvfb-run -s \"-screen 0 1280x720x24\" node index.js",
+    "install-deps": "bash scripts/install-deps.sh"
   },
   "keywords": [
     "yt-dlp",

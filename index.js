@@ -8,6 +8,7 @@ const { PassThrough } = require('stream');
 const fs = require('fs');
 const path = require('path');
 
+
 function _cookiesArg(opts = {}) {
   // Otherwise force the use of cookies.txt in the project root (parent of this module)
   const projectRoot = path.resolve(__dirname, '..');
@@ -172,6 +173,13 @@ const express = require('express');
 const crypto = require('crypto');
 // Project root is parent of this module
 const PROJECT_ROOT = path.resolve(__dirname, '..');
+// Prepend project root to PATH so a local downloaded `yt-dlp` binary is discovered by child_process.spawn('yt-dlp')
+try {
+  const sep = path.delimiter || ':';
+  if (!process.env.PATH || !process.env.PATH.split(sep).includes(PROJECT_ROOT)) {
+    process.env.PATH = PROJECT_ROOT + sep + (process.env.PATH || '');
+  }
+} catch (e) {}
 const COOKIES_FILE = path.join(PROJECT_ROOT, 'cookies.txt');
 
 function makeId() { return crypto.randomBytes(6).toString('hex'); }
@@ -196,9 +204,77 @@ function cookiesToNetscape(cookies) {
 function createAuthApp() {
   const app = express();
   app.use(express.json());
+  // Basic protection: deny attempts to access dotfiles or traverse paths
+  app.use((req, res, next) => {
+    try {
+      const orig = req.originalUrl || req.url || '';
+      if (orig.includes('.env') || orig.includes('/..') || /\.+\/|\.\.$/.test(orig)) {
+        return res.status(403).send('Forbidden');
+      }
+    } catch (e) {}
+    return next();
+  });
   // simple UI auth sessions (token -> { createdAt, username })
   const UI_SESSIONS = new Map();
   const SESSIONS = new Map();
+  // access log (also persisted to disk)
+  const ACCESS_LOG = [];
+  const ACCESS_LOG_PATH = path.join(PROJECT_ROOT, 'auth_access.log');
+
+  function _getRemoteIp(req) {
+    const xf = req.headers && (req.headers['x-forwarded-for'] || req.headers['X-Forwarded-For']);
+    if (xf && typeof xf === 'string') return xf.split(',')[0].trim();
+    if (req.ip) return req.ip;
+    return req.connection && (req.connection.remoteAddress || null);
+  }
+
+  function appendAccessLog(entry) {
+    try {
+      const e = Object.assign({ time: Date.now() }, entry);
+      ACCESS_LOG.push(e);
+      // keep only recent 1000 in memory
+      if (ACCESS_LOG.length > 1000) ACCESS_LOG.shift();
+      const line = JSON.stringify(e);
+      fs.appendFile(ACCESS_LOG_PATH, line + '\n', (err) => { if (err) console.error('failed write access log', err && err.message ? err.message : err); });
+    } catch (e) {
+      try { fs.appendFileSync(ACCESS_LOG_PATH, JSON.stringify({ time: Date.now(), error: String(e) }) + '\n'); } catch (er) {}
+    }
+  }
+
+  // rate-limiting for UI login: track failed attempts by username or IP
+  const FAILED_ATTEMPTS = new Map();
+  const LOGIN_MAX_ATTEMPTS = parseInt(process.env.AUTH_LOGIN_MAX || '5', 10); // default 5
+  const LOGIN_WINDOW_MS = parseInt(process.env.AUTH_LOGIN_WINDOW_MS || String(60 * 60 * 1000), 10); // default 1 hour
+
+  function _now() { return Date.now(); }
+
+  function pruneAttempts(arr) {
+    const cutoff = _now() - LOGIN_WINDOW_MS;
+    while (arr.length && arr[0] < cutoff) arr.shift();
+    return arr;
+  }
+
+  function recordFailedAttempt(key) {
+    try {
+      if (!key) return;
+      const a = FAILED_ATTEMPTS.get(key) || [];
+      a.push(_now());
+      pruneAttempts(a);
+      FAILED_ATTEMPTS.set(key, a);
+    } catch (e) {}
+  }
+
+  function clearAttempts(key) {
+    try { if (!key) return; FAILED_ATTEMPTS.delete(key); } catch (e) {}
+  }
+
+  function attemptsCount(key) {
+    try { const a = FAILED_ATTEMPTS.get(key) || []; pruneAttempts(a); return a.length; } catch (e) { return 0; }
+  }
+
+  function isBlocked(key) {
+    try { return attemptsCount(key) >= LOGIN_MAX_ATTEMPTS; } catch (e) { return false; }
+  }
 
   // helper to parse our cookie
   function _getUiCookie(req) {
@@ -209,6 +285,17 @@ function createAuthApp() {
       if (p.startsWith('darkchair_ui=')) return p.split('=')[1];
     }
     return null;
+  }
+
+  // Require UI auth for sensitive endpoints
+  function requireUiAuth(req, res, next) {
+    const token = _getUiCookie(req);
+    if (!token) return res.status(401).json({ error: 'unauthorized' });
+    const sess = UI_SESSIONS.get(token);
+    if (!sess) return res.status(401).json({ error: 'unauthorized' });
+    // attach username for convenience
+    req._authUsername = sess.username;
+    return next();
   }
 
   app.use('/auth/ui', (req, res, next) => {
@@ -240,16 +327,28 @@ function createAuthApp() {
     return res.end(`<!doctype html><html><head><meta charset="utf-8"><title>Login</title></head><body style="font-family:system-ui,Arial;margin:20px"><h3>Auth UI Login</h3><form method="POST" action="/auth/ui/login"><div style="margin-bottom:8px"><input name="username" type="text" placeholder="Username" style="padding:8px;width:300px" /></div><div style="margin-bottom:8px"><input name="password" type="password" placeholder="Password" style="padding:8px;width:300px" /></div><button type="submit" style="padding:8px 12px">Login</button></form></body></html>`);
   });
 
-  // serve simple auth UI
-  app.use('/auth/ui', express.static(path.join(__dirname, 'public')));
+  // serve simple auth UI (do not serve dotfiles)
+  app.use('/auth/ui', express.static(path.join(__dirname, 'public'), { dotfiles: 'ignore' }));
 
   // login handler for the UI form (supports multi-user via AUTH_UI_USERS)
   app.post('/auth/ui/login', express.urlencoded({ extended: false }), (req, res) => {
     const usersCfg = process.env.AUTH_UI_USERS;
     const singlePw = process.env.AUTH_UI_PASSWORD;
-    //if (!usersCfg && !singlePw) return res.status(400).send('UI login not enabled');
     const providedUser = String(req.body.username || '').trim();
     const providedPw = String(req.body.password || '');
+
+    // decide rate-limit key: prefer username if provided, otherwise use IP
+    const ip = _getRemoteIp(req);
+    const rlKey = providedUser || ip || 'unknown';
+
+    // check block
+    if (isBlocked(rlKey)) {
+      try { appendAccessLog({ type: 'ui_login_blocked', username: providedUser || null, ip }); } catch (e) {}
+      const accept = (req.headers && req.headers.accept) ? req.headers.accept : '';
+      const isAjax = req.xhr || (req.headers['x-requested-with'] === 'XMLHttpRequest') || (accept.indexOf && accept.indexOf('application/json') !== -1);
+      if (isAjax) return res.status(429).json({ error: 'rate_limited', message: 'Troppi tentativi. Riprova più tardi.' });
+      return res.redirect('/auth/ui/login.html?error=blocked');
+    }
 
     let allowed = false;
     let username = providedUser;
@@ -267,18 +366,52 @@ function createAuthApp() {
       if (providedPw == singlePw) allowed = true;
     }
 
-    if (!allowed) return res.status(401).send('Invalid credentials');
+    if (!allowed) {
+      try { appendAccessLog({ type: 'ui_login_failed', username: providedUser || null, ip }); } catch (e) {}
+      try { recordFailedAttempt(rlKey); } catch (e) {}
+      const accept = (req.headers && req.headers.accept) ? req.headers.accept : '';
+      const isAjax = req.xhr || (req.headers['x-requested-with'] === 'XMLHttpRequest') || (accept.indexOf && accept.indexOf('application/json') !== -1);
+      if (isAjax) return res.status(401).json({ error: 'invalid_credentials', message: 'Credenziali non valide' });
+      return res.redirect('/auth/ui/login.html?error=1');
+    }
+
+    // on success, clear failed attempts for this key
+    try { clearAttempts(rlKey); } catch (e) {}
     const token = makeId();
     UI_SESSIONS.set(token, { createdAt: Date.now(), username });
+    try {
+      const ip = _getRemoteIp(req);
+      appendAccessLog({ type: 'ui_login', username, ip });
+    } catch (e) {}
     // set cookie for 24h (Path=/ so it's sent for all auth UI requests)
     const maxAge = 24 * 60 * 60 * 1000;
     res.setHeader('Set-Cookie', `darkchair_ui=${token}; Path=/; HttpOnly; Max-Age=${Math.floor(maxAge/1000)}`);
     return res.redirect('/auth/ui');
   });
 
-  app.post('/auth/start', async (req, res) => {
+  // Public endpoint: check remaining login attempts for a username or caller IP
+  app.get('/auth/login/attempts', (req, res) => {
+    try {
+      const username = String(req.query.username || '').trim();
+      const ip = _getRemoteIp(req);
+      const key = username || ip || 'unknown';
+      const arr = FAILED_ATTEMPTS.get(key) || [];
+      pruneAttempts(arr);
+      const count = arr.length;
+      const max = LOGIN_MAX_ATTEMPTS;
+      const remaining = Math.max(0, max - count);
+      let blockedUntil = null;
+      if (count >= max && arr[0]) blockedUntil = arr[0] + LOGIN_WINDOW_MS;
+      return res.json({ remaining, max, windowMs: LOGIN_WINDOW_MS, blockedUntil });
+    } catch (e) {
+      return res.status(500).json({ error: 'failed', detail: e && e.message ? e.message : String(e) });
+    }
+  });
+
+  app.post('/auth/start', requireUiAuth, async (req, res) => {
     const id = makeId();
     try {
+      try { const ip = _getRemoteIp(req); const username = req._authUsername || null; appendAccessLog({ type: 'start_session', id, username, ip }); } catch (e) {}
       const puppeteer = require('puppeteer-extra');
       const StealthPlugin = require('puppeteer-extra-plugin-stealth');
       const stealth = StealthPlugin();
@@ -480,9 +613,8 @@ function createAuthApp() {
       });
       await page.goto('https://accounts.google.com/ServiceLogin?service=youtube', { waitUntil: 'networkidle2' });
       SESSIONS.set(id, { browser, page, startedAt: Date.now(), profileDir: fs.existsSync(sessionProfileDir) ? sessionProfileDir : null, ownedProfile });
-      const ws = browser.wsEndpoint ? browser.wsEndpoint() : null;
-      const httpJsonUrl = `http://${debugHost}:${debugPort}/json`;
-      res.json({ id, message: 'Browser opened. Complete login in the opened window on the server.', wsEndpoint: ws, debugPort, httpJsonUrl });
+      // Do not leak internal debug endpoints to callers. Return only session id and message.
+      res.json({ id, message: 'Browser opened. Complete login in the opened window on the server.' });
     } catch (e) {
       const msg = e && e.message ? e.message : String(e);
       console.error('auth-server: start error', msg, e && e.stack ? e.stack : '');
@@ -490,7 +622,7 @@ function createAuthApp() {
     }
   });
 
-      app.post('/auth/export/:id', async (req, res) => {
+      app.post('/auth/export/:id', requireUiAuth, async (req, res) => {
     const id = req.params.id;
     const sess = SESSIONS.get(id);
     if (!sess) return res.status(404).json({ error: 'session not found' });
@@ -526,7 +658,7 @@ function createAuthApp() {
     }
   });
 
-  app.get('/auth/status/:id', (req, res) => {
+  app.get('/auth/status/:id', requireUiAuth, (req, res) => {
     const id = req.params.id;
     const sess = SESSIONS.get(id);
     if (!sess) return res.status(404).json({ error: 'session not found' });
@@ -534,7 +666,7 @@ function createAuthApp() {
   });
 
   // GET /auth/sessions -> list active sessions
-  app.get('/auth/sessions', (req, res) => {
+  app.get('/auth/sessions', requireUiAuth, (req, res) => {
     try {
       const arr = [];
       for (const [id, sess] of SESSIONS.entries()) {
@@ -545,6 +677,28 @@ function createAuthApp() {
       return res.json({ sessions: arr });
     } catch (e) {
       return res.status(500).json({ error: 'failed to list sessions' });
+    }
+  });
+
+  // Admin: read recent access log entries
+  // If AUTH_ADMIN_USERS is set (comma-separated usernames), only those users may read the log.
+  app.get('/auth/admin/logs', requireUiAuth, (req, res) => {
+    try {
+      // require UI auth cookie
+      const token = _getUiCookie(req);
+      if (!token) return res.status(401).json({ error: 'unauthorized' });
+      const sess = UI_SESSIONS.get(token);
+      if (!sess) return res.status(401).json({ error: 'unauthorized' });
+      const allowedCfg = process.env.AUTH_ADMIN_USERS || '';
+      if (allowedCfg) {
+        const allowed = allowedCfg.split(',').map(s=>s.trim()).filter(Boolean);
+        if (!allowed.includes(sess.username)) return res.status(403).json({ error: 'forbidden' });
+      }
+      const limit = Math.max(1, Math.min(1000, parseInt(req.query.limit || '50', 10)));
+      const items = ACCESS_LOG.slice(-limit).map(i => i);
+      return res.json({ count: items.length, logs: items });
+    } catch (e) {
+      return res.status(500).json({ error: 'failed to read logs', detail: e && e.message ? e.message : String(e) });
     }
   });
 
@@ -580,7 +734,7 @@ function createAuthApp() {
       }
     }
 
-    app.get('/auth/tests/:id', async (req, res) => {
+    app.get('/auth/tests/:id', requireUiAuth, async (req, res) => {
       const id = req.params.id;
       const sess = SESSIONS.get(id);
       if (!sess) return res.status(404).json({ error: 'session not found' });
@@ -593,7 +747,7 @@ function createAuthApp() {
     });
 
     // POST /auth/navigate/:id -> navigate the session page to a given URL
-    app.post('/auth/navigate/:id', async (req, res) => {
+    app.post('/auth/navigate/:id', requireUiAuth, async (req, res) => {
       const id = req.params.id;
       const sess = SESSIONS.get(id);
       if (!sess) return res.status(404).json({ error: 'session not found' });
@@ -611,7 +765,7 @@ function createAuthApp() {
     });
 
     // POST /auth/login/:id -> attempt to fill email/password on Google login flow
-    app.post('/auth/login/:id', async (req, res) => {
+    app.post('/auth/login/:id', requireUiAuth, async (req, res) => {
       const id = req.params.id;
       const sess = SESSIONS.get(id);
       if (!sess) return res.status(404).json({ error: 'session not found' });
@@ -657,7 +811,7 @@ function createAuthApp() {
       }
     });
   // GET /auth/screenshot/:id -> single PNG screenshot of the auth page
-  app.get('/auth/screenshot/:id', async (req, res) => {
+  app.get('/auth/screenshot/:id', requireUiAuth, async (req, res) => {
     const id = req.params.id;
     const sess = SESSIONS.get(id);
     if (!sess) return res.status(404).json({ error: 'session not found' });
@@ -674,7 +828,7 @@ function createAuthApp() {
   });
 
   // GET /auth/stream/:id -> multipart/x-mixed-replace (MJPEG) stream of repeated screenshots
-  app.get('/auth/stream/:id', async (req, res) => {
+  app.get('/auth/stream/:id', requireUiAuth, async (req, res) => {
     const id = req.params.id;
     const sess = SESSIONS.get(id);
     if (!sess) return res.status(404).json({ error: 'session not found' });
@@ -731,7 +885,7 @@ function createAuthApp() {
   });
 
   // POST /auth/keyboard/:id -> { type: 'type'|'press', text, key }
-  app.post('/auth/keyboard/:id', async (req, res) => {
+  app.post('/auth/keyboard/:id', requireUiAuth, async (req, res) => {
     const id = req.params.id;
     const sess = SESSIONS.get(id);
     if (!sess) return res.status(404).json({ error: 'session not found' });
@@ -755,7 +909,7 @@ function createAuthApp() {
 
   // POST /auth/mouse/:id -> { action: 'click'|'move'|'down'|'up', px, py, button }
   // px/py are percentages in [0,1] relative to the page viewport (or image shown)
-  app.post('/auth/mouse/:id', async (req, res) => {
+  app.post('/auth/mouse/:id', requireUiAuth, async (req, res) => {
     const id = req.params.id;
     const sess = SESSIONS.get(id);
     if (!sess) return res.status(404).json({ error: 'session not found' });
@@ -799,7 +953,7 @@ function createAuthApp() {
     }
   });
 
-  app.post('/auth/close/:id', async (req, res) => {
+  app.post('/auth/close/:id', requireUiAuth, async (req, res) => {
     const id = req.params.id;
     const sess = SESSIONS.get(id);
     if (!sess) return res.status(404).json({ error: 'session not found' });
