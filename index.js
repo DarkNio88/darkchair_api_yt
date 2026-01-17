@@ -12,11 +12,7 @@ const path = require('path');
 function _cookiesArg(opts = {}) {
   // Determine project root robustly: parent of this module, but if installed
   // under node_modules walk up to the parent of node_modules.
-  let projectRoot = path.resolve(__dirname, '..');
-  // climb up while path component is node_modules (handle nested installs)
-  while (path.basename(projectRoot) === 'node_modules') {
-    projectRoot = path.resolve(projectRoot, '..');
-  }
+  let projectRoot = path.resolve(__dirname, '..', '..');
 
   // Default cookies path is projectRoot/cookies.txt
   let cookiesPath = path.join(projectRoot, 'cookies.txt');
