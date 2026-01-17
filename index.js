@@ -10,13 +10,26 @@ const path = require('path');
 
 
 function _cookiesArg(opts = {}) {
-  // Otherwise force the use of cookies.txt in the project root (parent of this module)
-  const projectRoot = path.resolve(__dirname, '..');
-  console.log('darkchair_api_yt: using project root for cookies:', projectRoot);
-  const cookiesPath = path.join(projectRoot, 'cookies.txt');
-  if (!fs.existsSync(cookiesPath)) {
-    console.error('darkchair_api_yt: cookies.txt non trovato in project root:', cookiesPath);
+  // Determine project root robustly: parent of this module, but if installed
+  // under node_modules walk up to the parent of node_modules.
+  let projectRoot = path.resolve(__dirname, '..');
+  // climb up while path component is node_modules (handle nested installs)
+  while (path.basename(projectRoot) === 'node_modules') {
+    projectRoot = path.resolve(projectRoot, '..');
   }
+
+  // Default cookies path is projectRoot/cookies.txt
+  let cookiesPath = path.join(projectRoot, 'cookies.txt');
+  if (!fs.existsSync(cookiesPath)) {
+    // Fall back to process.cwd() if running from project root where cookies.txt might live
+    const cwdCandidate = path.join(process.cwd(), 'cookies.txt');
+    if (fs.existsSync(cwdCandidate)) {
+      cookiesPath = cwdCandidate;
+    } else {
+      console.error('darkchair_api_yt: cookies.txt non trovato (checked):', cookiesPath);
+    }
+  }
+
   // By default prefer using an explicit cookies file written by the auth UI (`--cookies`)
   // Set USE_COOKIES_FROM_BROWSER=1 to also ask yt-dlp to extract from an installed browser profile.
   const useFromBrowser = (process.env.USE_COOKIES_FROM_BROWSER === '1' || process.env.USE_COOKIES_FROM_BROWSER === 'true');
