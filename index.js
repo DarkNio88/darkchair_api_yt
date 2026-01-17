@@ -8,6 +8,11 @@ const { PassThrough } = require('stream');
 const fs = require('fs');
 const path = require('path');
 
+// Debug: show where the process is running from and the module dir
+try {
+  console.log('darkchair_api_yt: startup __dirname=', __dirname, 'process.cwd()=', process.cwd());
+} catch (e) {}
+
 
 function _cookiesArg(opts = {}) {
   // Prefer cookies file from the current working directory (process root)
