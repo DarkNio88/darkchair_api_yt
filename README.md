@@ -16,7 +16,7 @@ Usage
 Example
 
 ```js
-const yt = require('darkchair_api_yt');
+const yt = require('DarkChair_API_YouTube');
 
 yt.isAvailable().then(console.log);
 
