@@ -18,7 +18,7 @@ function _cookiesArg(opts = {}) {
   let cookiesPath = path.join(projectRoot, 'cookies.txt');
   if (!fs.existsSync(cookiesPath)) {
     // Fall back to process.cwd() if running from project root where cookies.txt might live
-    const cwdCandidate = path.join(process.cwd(), 'cookies.txt');
+    const cwdCandidate = path.join(cookiesPath);
     if (fs.existsSync(cwdCandidate)) {
       cookiesPath = cwdCandidate;
     } else {
