@@ -10,20 +10,34 @@ const path = require('path');
 
 
 function _cookiesArg(opts = {}) {
-  // Determine project root robustly: parent of this module, but if installed
-  // under node_modules walk up to the parent of node_modules.
-  let projectRoot = path.resolve(__dirname, '..').replace("node_modules/", '');
+  // Prefer cookies file from the current working directory (process root)
+  const cwdCookies = path.join(process.cwd(), 'cookies.txt');
+  if (fs.existsSync(cwdCookies)) {
+    console.log('darkchair_api_yt: using cookies.txt from process.cwd():', cwdCookies);
+    const useFromBrowser = (process.env.USE_COOKIES_FROM_BROWSER === '1' || process.env.USE_COOKIES_FROM_BROWSER === 'true');
+    if (useFromBrowser) {
+      const product = process.env.PUPPETEER_PRODUCT || 'firefox';
+      return ['--cookies-from-browser', product, '--cookies', cwdCookies];
+    }
+    return ['--cookies', cwdCookies];
+  }
+
+  // Determine project root: parent of this module. If installed under node_modules,
+  // treat the directory above node_modules as the project root.
+  let projectRoot = path.resolve(__dirname, '..');
+  try {
+    const parts = projectRoot.split(path.sep);
+    const nmIndex = parts.lastIndexOf('node_modules');
+    if (nmIndex !== -1) {
+      projectRoot = parts.slice(0, nmIndex).join(path.sep) || path.sep;
+    }
+  } catch (e) {}
   console.log('darkchair_api_yt: determined project root as', projectRoot);
+
   // Default cookies path is projectRoot/cookies.txt
   let cookiesPath = path.join(projectRoot, 'cookies.txt');
   if (!fs.existsSync(cookiesPath)) {
-    // Fall back to process.cwd() if running from project root where cookies.txt might live
-    const cwdCandidate = path.join(cookiesPath);
-    if (fs.existsSync(cwdCandidate)) {
-      cookiesPath = cwdCandidate;
-    } else {
-      console.error('darkchair_api_yt: cookies.txt non trovato (checked):', cookiesPath);
-    }
+    console.error('darkchair_api_yt: cookies.txt non trovato (checked):', cookiesPath);
   }
 
   // By default prefer using an explicit cookies file written by the auth UI (`--cookies`)
