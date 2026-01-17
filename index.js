@@ -10,7 +10,7 @@ const path = require('path');
 
 // Debug: show where the process is running from and the module dir
 try {
-  console.log('darkchair_api_yt: startup __dirname=', __dirname, 'process.cwd()=', process.cwd());
+  console.log('darkchair_api_yt: startup __dirname=', process.cwd(), 'process.cwd()=', process.cwd());
 } catch (e) {}
 
 
@@ -29,7 +29,7 @@ function _cookiesArg(opts = {}) {
 
   // Determine project root: parent of this module. If installed under node_modules,
   // treat the directory above node_modules as the project root.
-  let projectRoot = path.resolve(__dirname, '..');
+  let projectRoot = path.resolve(process.cwd(), '..');
   try {
     const parts = projectRoot.split(path.sep);
     const nmIndex = parts.lastIndexOf('node_modules');
@@ -201,7 +201,7 @@ async function getInfo(url, opts = {}) {
 const express = require('express');
 const crypto = require('crypto');
 // Project root is parent of this module
-const PROJECT_ROOT = path.resolve(__dirname, '..');
+const PROJECT_ROOT = path.resolve(process.cwd(), '..');
 // Prepend project root to PATH so a local downloaded `yt-dlp` binary is discovered by child_process.spawn('yt-dlp')
 try {
   const sep = path.delimiter || ':';
