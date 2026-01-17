@@ -1,4 +1,4 @@
-# darkchair_api_yt
+# DarkChair_API_YouTube
 
 Tiny Node helper around `yt-dlp` to fetch metadata and stream audio to stdout.
 
@@ -16,7 +16,7 @@ Usage
 Example
 
 ```js
-const yt = require('./darkchair_api_yt');
+const yt = require('darkchair_api_yt');
 
 yt.isAvailable().then(console.log);
 
